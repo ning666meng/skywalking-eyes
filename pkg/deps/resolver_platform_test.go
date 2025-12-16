@@ -15,8 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-- package deps_test
-+ package deps
+
+package deps
 
 import (
 	"bufio"
