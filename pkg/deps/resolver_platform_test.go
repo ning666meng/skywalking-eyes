@@ -26,59 +26,49 @@ import (
 	"github.com/apache/skywalking-eyes/pkg/deps"
 )
 
-//
-// TC-NEW-001
-// Regression test: cross-platform npm binary packages should be skipped
-// (Node.js 24 introduces such packages via npm ls output)
-//
-func TestResolvePackageLicense_SkipCrossPlatformPackage(t *testing.T) {
+// -----------------------------
+// ResolvePackageLicense
+// -----------------------------
+
+func TestResolvePackageLicense_SkipCrossPlatform(t *testing.T) {
 	resolver := &deps.NpmResolver{}
 	cfg := &deps.ConfigDeps{}
 
-	var crossPlatformPkg string
+	var pkg string
 	switch runtime.GOOS {
 	case "linux":
-		crossPlatformPkg = "@parcel/watcher-darwin-arm64"
+		pkg = "@parcel/watcher-darwin-arm64"
 	case "darwin":
-		crossPlatformPkg = "@parcel/watcher-linux-x64"
+		pkg = "@parcel/watcher-linux-x64"
 	default:
-		crossPlatformPkg = "@parcel/watcher-linux-x64"
+		pkg = "@parcel/watcher-linux-x64"
 	}
 
-	// Path does not matter: cross-platform packages must be skipped safely
 	result := resolver.ResolvePackageLicense(
-		crossPlatformPkg,
+		pkg,
 		"/non/existent/path",
 		cfg,
 	)
 
-	// Behavior assertion:
-	// - no panic
-	// - license not resolved
 	if result.LicenseSpdxID != "" {
 		t.Fatalf(
 			"expected empty license for cross-platform package %q, got %q",
-			crossPlatformPkg,
-			result.LicenseSpdxID,
+			pkg, result.LicenseSpdxID,
 		)
 	}
 }
 
-//
-// TC-NEW-002
-// Behavior test: current-platform packages should still be parsed normally
-//
-func TestResolvePackageLicense_CurrentPlatformPackage(t *testing.T) {
+func TestResolvePackageLicense_CurrentPlatform(t *testing.T) {
 	resolver := &deps.NpmResolver{}
 	cfg := &deps.ConfigDeps{}
 
 	tmp := t.TempDir()
-	pkgJSON := filepath.Join(tmp, "package.json")
+	pkgFile := filepath.Join(tmp, deps.PkgFileName)
 
-	err := os.WriteFile(pkgJSON, []byte(`{
+	err := os.WriteFile(pkgFile, []byte(`{
 		"name": "normal-pkg",
 		"license": "Apache-2.0"
-	}`), 0644)
+	}`), 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,27 +81,19 @@ func TestResolvePackageLicense_CurrentPlatformPackage(t *testing.T) {
 
 	if result.LicenseSpdxID != "Apache-2.0" {
 		t.Fatalf(
-			"expected license Apache-2.0 for current-platform package, got %q",
+			"expected license Apache-2.0, got %q",
 			result.LicenseSpdxID,
 		)
 	}
 }
 
-//
-// TC-NEW-003
-// Safety test: malformed or unexpected package paths should not cause panic
-//
-func TestResolvePackageLicense_InvalidPathDoesNotCrash(t *testing.T) {
+func TestResolvePackageLicense_InvalidPath(t *testing.T) {
 	resolver := &deps.NpmResolver{}
 	cfg := &deps.ConfigDeps{}
 
-	result := resolver.ResolvePackageLicense(
+	_ = resolver.ResolvePackageLicense(
 		"some-random-package",
 		"/definitely/not/exist",
 		cfg,
 	)
-
-	// No panic is the main assertion.
-	// Result may be empty, which is acceptable.
-	_ = result
 }
