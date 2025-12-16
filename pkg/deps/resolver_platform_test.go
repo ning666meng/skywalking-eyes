@@ -33,17 +33,16 @@ import (
 //
 func TestNormalizeArch(t *testing.T) {
 	cases := map[string]string{
-		"amd64":   archAMD64,
-		"x64":     archAMD64,
-		"x86_64":  archAMD64,
-		"X64":     archAMD64,
+		"amd64":   "x64",
+		"x64":     "x64",
+		"x86_64":  "x64",
 		"ia32":    "386",
 		"x86":     "386",
 		"386":     "386",
-		"arm64":   archARM64,
-		"aarch64": archARM64,
-		"arm":     archARM,
-		"ARMV7":   archARM,
+		"arm64":   "arm64",
+		"aarch64": "arm64",
+		"arm":     "arm",
+		"ARMV7":   "arm",
 		"unknown": "unknown",
 	}
 
@@ -53,6 +52,7 @@ func TestNormalizeArch(t *testing.T) {
 		}
 	}
 }
+
 
 //
 // TC-006 / TC-007 / TC-008
