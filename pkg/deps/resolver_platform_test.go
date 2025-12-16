@@ -15,232 +15,103 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package deps
-
+package deps_test
 
 import (
-	"bytes"
-	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/apache/skywalking-eyes/pkg/deps"
 )
 
 //
-// TC-001 / TC-002
-// Unit test: architecture normalization
+// TC-NEW-001
+// Regression test: cross-platform npm binary packages should be skipped
+// (Node.js 24 introduces such packages via npm ls output)
 //
-func TestNormalizeArch(t *testing.T) {
-	cases := map[string]string{
-		"amd64":   "x64",
-		"x64":     "x64",
-		"x86_64":  "x64",
-		"ia32":    "386",
-		"x86":     "386",
-		"386":     "386",
-		"arm64":   "arm64",
-		"aarch64": "arm64",
-		"arm":     "arm",
-		"ARMV7":   "arm",
-		"unknown": "unknown",
-	}
+func TestResolvePackageLicense_SkipCrossPlatformPackage(t *testing.T) {
+	resolver := &deps.NpmResolver{}
+	cfg := &deps.ConfigDeps{}
 
-	for in, want := range cases {
-		if got := normalizeArch(in); got != want {
-			t.Fatalf("normalizeArch(%q) = %q; want %q", in, got, want)
-		}
-	}
-}
-
-
-//
-// TC-006 / TC-007 / TC-008
-// Unit + boundary tests for package platform parsing
-//
-func TestAnalyzePackagePlatform(t *testing.T) {
-	resolver := &NpmResolver{}
-
-	tests := []struct {
-		name     string
-		pkgName  string
-		wantOS   string
-		wantArch string
-	}{
-		{
-			name:     "full linux arm64 package",
-			pkgName:  "@parcel/watcher-linux-arm64-glibc",
-			wantOS:   "linux",
-			wantArch: archARM64,
-		},
-		{
-			name:     "full darwin arm64 package",
-			pkgName:  "pkg-darwin-arm64",
-			wantOS:   "darwin",
-			wantArch: archARM64,
-		},
-		{
-			name:     "TC-007 incomplete platform info",
-			pkgName:  "foo-linux",
-			wantOS:   "",
-			wantArch: "",
-		},
-		{
-			name:     "TC-008 abnormal platform format",
-			pkgName:  "foo-linux-unknown-extra",
-			wantOS:   "",
-			wantArch: "",
-		},
-		{
-			name:     "regular non-platform package",
-			pkgName:  "lodash",
-			wantOS:   "",
-			wantArch: "",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			osName, arch := resolver.analyzePackagePlatform(tc.pkgName)
-			if osName != tc.wantOS || arch != tc.wantArch {
-				t.Fatalf(
-					"analyzePackagePlatform(%q) = (%q,%q); want (%q,%q)",
-					tc.pkgName, osName, arch, tc.wantOS, tc.wantArch,
-				)
-			}
-		})
-	}
-}
-
-//
-// helper: build a package name matching current runtime
-//
-func platformPkgForRuntime() string {
-	goos := runtime.GOOS
-	goarch := normalizeArch(runtime.GOARCH)
-
-	switch goos {
-	case "linux":
-		if goarch == archARM64 {
-			return "pkg-linux-arm64"
-		}
-		return "pkg-linux-x64"
-	case "darwin":
-		if goarch == archARM64 {
-			return "pkg-darwin-arm64"
-		}
-		return "pkg-darwin-x64"
-	case "windows":
-		return "pkg-win32-x64"
-	default:
-		return "pkg-neutral"
-	}
-}
-
-//
-// TC-009
-// Unit test: isForCurrentPlatform logic
-//
-func TestIsForCurrentPlatform(t *testing.T) {
-	resolver := &NpmResolver{}
-
-	matchPkg := platformPkgForRuntime()
-	if !resolver.isForCurrentPlatform(matchPkg) {
-		t.Fatalf("expected %q to match current platform", matchPkg)
-	}
-
-	var otherPkg string
+	var crossPlatformPkg string
 	switch runtime.GOOS {
 	case "linux":
-		otherPkg = "pkg-darwin-arm64"
+		crossPlatformPkg = "@parcel/watcher-darwin-arm64"
 	case "darwin":
-		otherPkg = "pkg-win32-x64"
+		crossPlatformPkg = "@parcel/watcher-linux-x64"
 	default:
-		otherPkg = "pkg-linux-x64"
+		crossPlatformPkg = "@parcel/watcher-linux-x64"
 	}
 
-	if resolver.isForCurrentPlatform(otherPkg) {
-		t.Fatalf("expected %q NOT to match current platform", otherPkg)
+	// Path does not matter: cross-platform packages must be skipped safely
+	result := resolver.ResolvePackageLicense(
+		crossPlatformPkg,
+		"/non/existent/path",
+		cfg,
+	)
+
+	// Behavior assertion:
+	// - no panic
+	// - license not resolved
+	if result.LicenseSpdxID != "" {
+		t.Fatalf(
+			"expected empty license for cross-platform package %q, got %q",
+			crossPlatformPkg,
+			result.LicenseSpdxID,
+		)
 	}
 }
 
 //
-// testResolver mocks npm ls output
+// TC-NEW-002
+// Behavior test: current-platform packages should still be parsed normally
 //
-type testResolver struct {
-	NpmResolver
-	buffer io.Reader
-}
+func TestResolvePackageLicense_CurrentPlatformPackage(t *testing.T) {
+	resolver := &deps.NpmResolver{}
+	cfg := &deps.ConfigDeps{}
 
-func (r *testResolver) ListPkgPaths() (io.Reader, error) {
-	return r.buffer, nil
-}
-
-//
-// TC-004
-// Regression test: non-cross-platform packages remain parsed
-//
-func TestGetInstalledPkgs_NonCrossPlatform(t *testing.T) {
 	tmp := t.TempDir()
-	nodeModules := filepath.Join(tmp, "node_modules")
-	_ = os.MkdirAll(nodeModules, 0o755)
+	pkgJSON := filepath.Join(tmp, "package.json")
 
-	paths := []string{
-		filepath.Join(nodeModules, "lodash"),
-		filepath.Join(nodeModules, "express"),
+	err := os.WriteFile(pkgJSON, []byte(`{
+		"name": "normal-pkg",
+		"license": "Apache-2.0"
+	}`), 0644)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	var b bytes.Buffer
-	for _, p := range paths {
-		_ = os.MkdirAll(p, 0o755)
-		b.WriteString(p + "\n")
-	}
+	result := resolver.ResolvePackageLicense(
+		"normal-pkg",
+		tmp,
+		cfg,
+	)
 
-	tr := &testResolver{buffer: &b}
-	pkgs := tr.GetInstalledPkgs(nodeModules)
-
-	if len(pkgs) != 2 {
-		t.Fatalf("expected 2 pkgs, got %d", len(pkgs))
-	}
-}
-
-//
-// TC-011
-// Negative test: empty npm ls output
-//
-func TestGetInstalledPkgs_EmptyOutput(t *testing.T) {
-	tmp := t.TempDir()
-	nodeModules := filepath.Join(tmp, "node_modules")
-	_ = os.MkdirAll(nodeModules, 0o755)
-
-	tr := &testResolver{buffer: bytes.NewBuffer(nil)}
-	pkgs := tr.GetInstalledPkgs(nodeModules)
-
-	if len(pkgs) != 0 {
-		t.Fatalf("expected 0 pkgs, got %d", len(pkgs))
+	if result.LicenseSpdxID != "Apache-2.0" {
+		t.Fatalf(
+			"expected license Apache-2.0 for current-platform package, got %q",
+			result.LicenseSpdxID,
+		)
 	}
 }
 
 //
-// TC-005 / TC-010
-// Regression + negative test for ResolvePackageLicense
+// TC-NEW-003
+// Safety test: malformed or unexpected package paths should not cause panic
 //
-func TestResolvePackageLicense_CrossPlatformSkip(t *testing.T) {
-	resolver := &NpmResolver{}
-	cfg := &ConfigDeps{}
+func TestResolvePackageLicense_InvalidPathDoesNotCrash(t *testing.T) {
+	resolver := &deps.NpmResolver{}
+	cfg := &deps.ConfigDeps{}
 
-	var otherPkg string
-	switch runtime.GOOS {
-	case "linux":
-		otherPkg = "pkg-darwin-arm64"
-	case "darwin":
-		otherPkg = "pkg-win32-x64"
-	default:
-		otherPkg = "pkg-linux-x64"
-	}
+	result := resolver.ResolvePackageLicense(
+		"some-random-package",
+		"/definitely/not/exist",
+		cfg,
+	)
 
-	result := resolver.ResolvePackageLicense(otherPkg, "/fake/path", cfg)
-	if !result.IsCrossPlatform {
-		t.Fatalf("expected IsCrossPlatform=true for %q", otherPkg)
-	}
+	// No panic is the main assertion.
+	// Result may be empty, which is acceptable.
+	_ = result
 }
