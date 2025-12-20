@@ -21,7 +21,7 @@ on:
     branches: [ "skipping-cross-platform-packages " ]
   pull_request:
     branches: [ "main" ]
-
+  workflow_dispatch:
 jobs:
 
   build:
