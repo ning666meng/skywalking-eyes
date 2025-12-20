@@ -2,7 +2,7 @@
 // or more contributor license agreements.  See the NOTICE file
 // distributed with this work for additional information
 // regarding copyright ownership.  The ASF licenses this file
-// to you under the Apache License, Version 2.0 (the
+// under the Apache License, Version 2.0 (the
 // "License"); you may not use this file except in compliance
 // with the License.  You may obtain a copy of the License at
 //
@@ -18,6 +18,7 @@
 package deps_test
 
 import (
+	"bufio"
 	"bytes"
 	"os"
 	"path/filepath"
@@ -99,37 +100,6 @@ func TestResolvePackageLicense_InvalidPath(t *testing.T) {
 }
 
 // -----------------------------
-// Mock resolver for coverage
-// -----------------------------
-
-type mockNpmResolver struct {
-	deps.NpmResolver
-	mockPkgPaths []string
-}
-
-func (r *mockNpmResolver) ListPkgPaths() (*bytes.Buffer, error) {
-	buf := &bytes.Buffer{}
-	for _, p := range r.mockPkgPaths {
-		buf.WriteString(p + "\n")
-	}
-	return buf, nil
-}
-
-func (r *mockNpmResolver) GetInstalledPkgs(pkgDir string) []*deps.Package {
-	buffer, _ := r.ListPkgPaths()
-	pkgs := []*deps.Package{}
-	sc := deps.Scanner(buffer)
-	for sc.Scan() {
-		p := sc.Text()
-		pkgs = append(pkgs, &deps.Package{
-			Name: filepath.Base(p),
-			Path: p,
-		})
-	}
-	return pkgs
-}
-
-// -----------------------------
 // Additional coverage tests
 // -----------------------------
 
@@ -166,7 +136,7 @@ func TestResolveLicenseFieldAndLicensesField(t *testing.T) {
 	}
 }
 
-func TestResolvePkgFile(t *testing.T) {
+func TestParsePkgFileCustom(t *testing.T) {
 	tmp := t.TempDir()
 	pkgFile := filepath.Join(tmp, deps.PkgFileName)
 	content := `{"name":"testpkg","license":"MIT","version":"1.0.0"}`
@@ -187,7 +157,7 @@ func TestResolvePkgFile(t *testing.T) {
 	}
 }
 
-func TestResolveLcsFile(t *testing.T) {
+func TestResolveLcsFileCustom(t *testing.T) {
 	tmp := t.TempDir()
 	licenseFile := filepath.Join(tmp, "LICENSE")
 	content := "MIT LICENSE CONTENT"
@@ -206,6 +176,34 @@ func TestResolveLcsFile(t *testing.T) {
 	if result.LicenseFilePath != licenseFile {
 		t.Fatalf("expected license file path, got %q", result.LicenseFilePath)
 	}
+}
+
+// Mock resolver for GetInstalledPkgs
+type mockNpmResolver struct {
+	deps.NpmResolver
+	mockPkgPaths []string
+}
+
+func (r *mockNpmResolver) ListPkgPaths() (*bytes.Buffer, error) {
+	buf := &bytes.Buffer{}
+	for _, p := range r.mockPkgPaths {
+		buf.WriteString(p + "\n")
+	}
+	return buf, nil
+}
+
+func (r *mockNpmResolver) GetInstalledPkgs(pkgDir string) []*deps.Package {
+	buffer, _ := r.ListPkgPaths()
+	sc := bufio.NewScanner(buffer)
+	pkgs := []*deps.Package{}
+	for sc.Scan() {
+		p := sc.Text()
+		pkgs = append(pkgs, &deps.Package{
+			Name: filepath.Base(p),
+			Path: p,
+		})
+	}
+	return pkgs
 }
 
 func TestGetInstalledPkgs_MockPaths(t *testing.T) {
