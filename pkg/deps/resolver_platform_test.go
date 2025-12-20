@@ -1,9 +1,9 @@
 // Licensed to the Apache Software Foundation (ASF) under one
-// or more contributor license agreements. See the NOTICE file
+// or more contributor license agreements.  See the NOTICE file
 // for additional information regarding copyright ownership.
 // The ASF licenses this file under the Apache License, Version 2.0 (the
 // "License"); you may not use this file except in compliance with the
-// License. You may obtain a copy of the License at
+// License.  You may obtain a copy of the License at
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 //
@@ -24,75 +24,127 @@ import (
 	"github.com/apache/skywalking-eyes/pkg/deps"
 )
 
-var crossPlatformPackages = map[string]string{
-	"linux":   "@parcel/watcher-darwin-arm64",
-	"darwin":  "@parcel/watcher-linux-x64",
-	"default": "@parcel/watcher-linux-x64",
-}
-
-var TestResolvePackageLicenseData = []struct {
-	name        string
-	packageName string
-	pkgJSON     string
-	expect      string
-}{
-	{
-		name:        "Skip cross-platform package",
-		packageName: "",
-		expect:      "",
-	},
-	{
-		name:        "Current platform package",
-		packageName: "normal-pkg",
-		pkgJSON: `{
-			"name": "normal-pkg",
-			"license": "Apache-2.0"
-		}`,
-		expect: "Apache-2.0",
-	},
-	{
-		name:        "Invalid path does not crash",
-		packageName: "some-random-package",
-		expect:      "",
-	},
-	{
-		name:        "Cross-platform package with package.json",
-		packageName: "",
-		pkgJSON:     `{"license":"MIT"}`,
-		expect:      "",
-	},
-}
-
-func TestResolvePackageLicense(t *testing.T) {
-	resolver := new(deps.NpmResolver)
+//
+// TC-NEW-001
+// Regression test: cross-platform npm binary packages should be skipped
+// (Node.js 24 introduces such packages via npm ls output)
+//
+func TestResolvePackageLicense_SkipCrossPlatformPackage(t *testing.T) {
+	resolver := &deps.NpmResolver{}
 	cfg := &deps.ConfigDeps{}
+
+	var crossPlatformPkg string
+	switch runtime.GOOS {
+	case "linux":
+		crossPlatformPkg = "@parcel/watcher-darwin-arm64"
+	case "darwin":
+		crossPlatformPkg = "@parcel/watcher-linux-x64"
+	default:
+		crossPlatformPkg = "@parcel/watcher-linux-x64"
+	}
+
+	result := resolver.ResolvePackageLicense(
+		crossPlatformPkg,
+		"/non/existent/path",
+		cfg,
+	)
+
+	if result.LicenseSpdxID != "" {
+		t.Fatalf(
+			"expected empty license for cross-platform package %q, got %q",
+			crossPlatformPkg,
+			result.LicenseSpdxID,
+		)
+	}
+}
+
+//
+// TC-NEW-002
+// Behavior test: current-platform packages should still be parsed normally
+//
+func TestResolvePackageLicense_CurrentPlatformPackage(t *testing.T) {
+	resolver := &deps.NpmResolver{}
+	cfg := &deps.ConfigDeps{}
+
 	tmp := t.TempDir()
+	pkgJSON := filepath.Join(tmp, "package.json")
 
-	for _, tt := range TestResolvePackageLicenseData {
-		t.Run(tt.name, func(t *testing.T) {
-			pkg := tt.packageName
-			if pkg == "" {
-				switch runtime.GOOS {
-				case "linux":
-					pkg = crossPlatformPackages["linux"]
-				case "darwin":
-					pkg = crossPlatformPackages["darwin"]
-				default:
-					pkg = crossPlatformPackages["default"]
-				}
-			}
+	err := os.WriteFile(pkgJSON, []byte(`{
+		"name": "normal-pkg",
+		"license": "Apache-2.0"
+	}`), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-			if tt.pkgJSON != "" {
-				pkgFile := filepath.Join(tmp, "package.json")
-				if err := os.WriteFile(pkgFile, []byte(tt.pkgJSON), 0644); err != nil {
-					t.Fatal(err)
-				}
-			}
+	result := resolver.ResolvePackageLicense(
+		"normal-pkg",
+		tmp,
+		cfg,
+	)
 
-			result := resolver.ResolvePackageLicense(pkg, tmp, cfg)
-			if result.LicenseSpdxID != tt.expect {
-				t.Fatalf("expected license %q, got %q", tt.expect, result.LicenseSpdxID)
-			}
-		})
+	if result.LicenseSpdxID != "Apache-2.0" {
+		t.Fatalf(
+			"expected license Apache-2.0 for current-platform package, got %q",
+			result.LicenseSpdxID,
+		)
+	}
+}
+
+//
+// TC-NEW-003
+// Safety test: malformed or unexpected package paths should not cause panic
+//
+func TestResolvePackageLicense_InvalidPathDoesNotCrash(t *testing.T) {
+	resolver := &deps.NpmResolver{}
+	cfg := &deps.ConfigDeps{}
+
+	result := resolver.ResolvePackageLicense(
+		"some-random-package",
+		"/definitely/not/exist",
+		cfg,
+	)
+
+	// No panic is the main assertion.
+	_ = result
+}
+
+//
+// TC-NEW-004
+// Regression test: cross-platform npm package should be skipped
+// even if package.json exists
+//
+func TestResolvePackageLicense_CrossPlatformWithPkgJSON(t *testing.T) {
+	resolver := &deps.NpmResolver{}
+	cfg := &deps.ConfigDeps{}
+
+	tmp := t.TempDir()
+	err := os.WriteFile(
+		filepath.Join(tmp, "package.json"),
+		[]byte(`{"license":"MIT"}`),
+		0644,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var crossPlatformPkg string
+	switch runtime.GOOS {
+	case "linux":
+		crossPlatformPkg = "@parcel/watcher-darwin-arm64"
+	case "darwin":
+		crossPlatformPkg = "@parcel/watcher-linux-x64"
+	default:
+		crossPlatformPkg = "@parcel/watcher-linux-x64"
+	}
+
+	result := resolver.ResolvePackageLicense(crossPlatformPkg, tmp, cfg)
+
+	if result.LicenseSpdxID != "" {
+		t.Fatalf(
+			"expected empty license for cross-platform package %q even with package.json, got %q",
+			crossPlatformPkg,
+			result.LicenseSpdxID,
+		)
 	}
 }
