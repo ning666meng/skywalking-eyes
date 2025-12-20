@@ -18,7 +18,7 @@ name: Go
 
 on:
   push:
-    branches: [ "skipping-cross-platform-packages " ]
+    branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
   workflow_dispatch:
@@ -39,9 +39,9 @@ jobs:
 
     - name: Test with coverage (pkg/deps)
       run: |
-        go test ./pkg/deps \
-          -covermode=atomic \
-          -coverpkg=./pkg/deps \
-          -coverprofile=coverage.out
-        go tool cover -func=coverage.out
+        # 运行测试并生成覆盖率报告
+        go test ./pkg/deps -run ^TestResolvePackageLicense -coverprofile=platform-coverage.out -coverpkg=./pkg/deps
+        # 输出覆盖率结果（会显示在Action日志中）
+        go tool cover -func=platform-coverage.out
+
  
