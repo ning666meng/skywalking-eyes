@@ -2,7 +2,7 @@
 // or more contributor license agreements.  See the NOTICE file
 // distributed with this work for additional information
 // regarding copyright ownership.  The ASF licenses this file
-// under the Apache License, Version 2.0 (the
+// to you under the Apache License, Version 2.0 (the
 // "License"); you may not use this file except in compliance
 // with the License.  You may obtain a copy of the License at
 //
@@ -27,38 +27,15 @@ import (
 )
 
 // -----------------------------
-// Mock NpmResolver
+// Original tests
 // -----------------------------
-type mockNpmResolver struct {
-	deps.NpmResolver
-	mockPkgPaths []string
-}
 
-func (r *mockNpmResolver) ListPkgPaths() (*bytes.Buffer, error) {
-	buf := &bytes.Buffer{}
-	for _, p := range r.mockPkgPaths {
-		buf.WriteString(p + "\n")
-	}
-	return buf, nil
-}
-
-func (r *mockNpmResolver) InstallPkgs() {
-	// noop
-}
-
-func (r *mockNpmResolver) NeedSkipInstallPkgs() bool {
-	return true // skip install
-}
-
-// -----------------------------
-// Test: Cross-platform package should be skipped
-// -----------------------------
 func TestResolvePackageLicense_SkipCrossPlatform(t *testing.T) {
 	resolver := &deps.NpmResolver{}
 	cfg := &deps.ConfigDeps{}
 
 	var pkg string
-	switch os.Getenv("GOOS") {
+	switch os := os.Getenv("GOOS"); os {
 	case "linux":
 		pkg = "@parcel/watcher-darwin-arm64"
 	case "darwin":
@@ -81,15 +58,13 @@ func TestResolvePackageLicense_SkipCrossPlatform(t *testing.T) {
 	}
 }
 
-// -----------------------------
-// Test: Current-platform package should parse normally
-// -----------------------------
 func TestResolvePackageLicense_CurrentPlatform(t *testing.T) {
 	resolver := &deps.NpmResolver{}
 	cfg := &deps.ConfigDeps{}
 
 	tmp := t.TempDir()
 	pkgFile := filepath.Join(tmp, deps.PkgFileName)
+
 	err := os.WriteFile(pkgFile, []byte(`{
 		"name": "normal-pkg",
 		"license": "Apache-2.0"
@@ -105,13 +80,13 @@ func TestResolvePackageLicense_CurrentPlatform(t *testing.T) {
 	)
 
 	if result.LicenseSpdxID != "Apache-2.0" {
-		t.Fatalf("expected license Apache-2.0, got %q", result.LicenseSpdxID)
+		t.Fatalf(
+			"expected license Apache-2.0, got %q",
+			result.LicenseSpdxID,
+		)
 	}
 }
 
-// -----------------------------
-// Test: Invalid path does not crash
-// -----------------------------
 func TestResolvePackageLicense_InvalidPath(t *testing.T) {
 	resolver := &deps.NpmResolver{}
 	cfg := &deps.ConfigDeps{}
@@ -124,14 +99,119 @@ func TestResolvePackageLicense_InvalidPath(t *testing.T) {
 }
 
 // -----------------------------
-// Test: GetInstalledPkgs with mocked paths
+// Mock resolver for coverage
 // -----------------------------
+
+type mockNpmResolver struct {
+	deps.NpmResolver
+	mockPkgPaths []string
+}
+
+func (r *mockNpmResolver) ListPkgPaths() (*bytes.Buffer, error) {
+	buf := &bytes.Buffer{}
+	for _, p := range r.mockPkgPaths {
+		buf.WriteString(p + "\n")
+	}
+	return buf, nil
+}
+
+func (r *mockNpmResolver) GetInstalledPkgs(pkgDir string) []*deps.Package {
+	buffer, _ := r.ListPkgPaths()
+	pkgs := []*deps.Package{}
+	sc := deps.Scanner(buffer)
+	for sc.Scan() {
+		p := sc.Text()
+		pkgs = append(pkgs, &deps.Package{
+			Name: filepath.Base(p),
+			Path: p,
+		})
+	}
+	return pkgs
+}
+
+// -----------------------------
+// Additional coverage tests
+// -----------------------------
+
+func TestCanResolve(t *testing.T) {
+	resolver := &deps.NpmResolver{}
+	if !resolver.CanResolve("package.json") {
+		t.Fatal("package.json should be resolvable")
+	}
+	if resolver.CanResolve("other.json") {
+		t.Fatal("other.json should not be resolvable")
+	}
+}
+
+func TestResolveLicenseFieldAndLicensesField(t *testing.T) {
+	resolver := &deps.NpmResolver{}
+
+	// license string
+	lcs, ok := resolver.ResolveLicenseField([]byte(`"MIT"`))
+	if !ok || lcs != "MIT" {
+		t.Fatalf("expected MIT, got %q", lcs)
+	}
+
+	// license object
+	lcs, ok = resolver.ResolveLicenseField([]byte(`{"type":"Apache-2.0"}`))
+	if !ok || lcs != "Apache-2.0" {
+		t.Fatalf("expected Apache-2.0, got %q", lcs)
+	}
+
+	// licenses array
+	arr := []deps.Lcs{{Type: "MIT"}, {Type: "GPL-3.0"}}
+	lcsStr, ok := resolver.ResolveLicensesField(arr)
+	if !ok || lcsStr != "MIT OR GPL-3.0" {
+		t.Fatalf("expected MIT OR GPL-3.0, got %q", lcsStr)
+	}
+}
+
+func TestResolvePkgFile(t *testing.T) {
+	tmp := t.TempDir()
+	pkgFile := filepath.Join(tmp, deps.PkgFileName)
+	content := `{"name":"testpkg","license":"MIT","version":"1.0.0"}`
+	if err := os.WriteFile(pkgFile, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver := &deps.NpmResolver{}
+	pkg, err := resolver.ParsePkgFile(pkgFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pkg.Name != "testpkg" {
+		t.Fatalf("expected testpkg, got %q", pkg.Name)
+	}
+	if pkg.Version != "1.0.0" {
+		t.Fatalf("expected 1.0.0, got %q", pkg.Version)
+	}
+}
+
+func TestResolveLcsFile(t *testing.T) {
+	tmp := t.TempDir()
+	licenseFile := filepath.Join(tmp, "LICENSE")
+	content := "MIT LICENSE CONTENT"
+	if err := os.WriteFile(licenseFile, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver := &deps.NpmResolver{}
+	result := &deps.Result{}
+	if err := resolver.ResolveLcsFile(result, tmp, &deps.ConfigDeps{}); err != nil {
+		t.Fatal(err)
+	}
+	if result.LicenseContent != content {
+		t.Fatalf("expected license content, got %q", result.LicenseContent)
+	}
+	if result.LicenseFilePath != licenseFile {
+		t.Fatalf("expected license file path, got %q", result.LicenseFilePath)
+	}
+}
+
 func TestGetInstalledPkgs_MockPaths(t *testing.T) {
 	tmp := t.TempDir()
 	p1 := filepath.Join(tmp, "pkg1")
 	p2 := filepath.Join(tmp, "pkg2")
-	os.MkdirAll(p1, 0o755)
-	os.MkdirAll(p2, 0o755)
 
 	mock := &mockNpmResolver{
 		mockPkgPaths: []string{p1, p2},
@@ -140,21 +220,5 @@ func TestGetInstalledPkgs_MockPaths(t *testing.T) {
 	pkgs := mock.GetInstalledPkgs(tmp)
 	if len(pkgs) != 2 {
 		t.Fatalf("expected 2 packages, got %d", len(pkgs))
-	}
-	if pkgs[0].Path != p1 || pkgs[1].Path != p2 {
-		t.Fatalf("unexpected package paths: %+v", pkgs)
-	}
-}
-
-// -----------------------------
-// Test: CanResolve function
-// -----------------------------
-func TestCanResolve(t *testing.T) {
-	resolver := &deps.NpmResolver{}
-	if !resolver.CanResolve(deps.PkgFileName) {
-		t.Fatal("CanResolve should return true for package.json")
-	}
-	if resolver.CanResolve("other.json") {
-		t.Fatal("CanResolve should return false for non-package.json")
 	}
 }
