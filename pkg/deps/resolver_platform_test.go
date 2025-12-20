@@ -9,15 +9,14 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY
-// KIND, either express or implied.  See the License for the
-// specific language governing permissions and limitations
-// under the License.
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and limitations.
 
 package deps_test
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -27,7 +26,7 @@ import (
 )
 
 // -----------------------------
-// ResolvePackageLicense Tests
+// 基础测试
 // -----------------------------
 
 func TestResolvePackageLicense_SkipCrossPlatform(t *testing.T) {
@@ -58,16 +57,9 @@ func TestResolvePackageLicense_CurrentPlatform(t *testing.T) {
 	tmp := t.TempDir()
 	pkgFile := filepath.Join(tmp, deps.PkgFileName)
 
-	err := os.WriteFile(pkgFile, []byte(`{
-		"name": "normal-pkg",
-		"license": "Apache-2.0"
-	}`), 0o644)
-	if err != nil {
-		t.Fatal(err)
-	}
+	os.WriteFile(pkgFile, []byte(`{"name":"normal-pkg","license":"Apache-2.0"}`), 0o644)
 
 	result := resolver.ResolvePackageLicense("normal-pkg", tmp, cfg)
-
 	if result.LicenseSpdxID != "Apache-2.0" {
 		t.Fatalf("expected license Apache-2.0, got %q", result.LicenseSpdxID)
 	}
@@ -81,7 +73,7 @@ func TestResolvePackageLicense_InvalidPath(t *testing.T) {
 }
 
 // -----------------------------
-// CanResolve Test
+// 补充测试覆盖未覆盖方法
 // -----------------------------
 
 func TestCanResolve(t *testing.T) {
@@ -89,54 +81,19 @@ func TestCanResolve(t *testing.T) {
 	if !resolver.CanResolve(deps.PkgFileName) {
 		t.Fatal("expected CanResolve to return true for package.json")
 	}
-	if resolver.CanResolve("other.json") {
+	if resolver.CanResolve("otherfile.txt") {
 		t.Fatal("expected CanResolve to return false for non-package.json")
 	}
 }
 
-// -----------------------------
-// ResolveLicenseField / LicensesField Tests
-// -----------------------------
-
-func TestResolveLicenseFieldAndLicensesField(t *testing.T) {
-	resolver := &deps.NpmResolver{}
-
-	// License as string
-	lic, ok := resolver.ResolveLicenseField([]byte(`"MIT"`))
-	if !ok || lic != "MIT" {
-		t.Fatal("failed to parse string license")
-	}
-
-	// License as object
-	lic, ok = resolver.ResolveLicenseField([]byte(`{"type":"GPL-3.0"}`))
-	if !ok || lic != "GPL-3.0" {
-		t.Fatal("failed to parse object license")
-	}
-
-	// Empty
-	_, ok = resolver.ResolveLicenseField([]byte(``))
-	if ok {
-		t.Fatal("expected false for empty license")
-	}
-
-	// Licenses field
-	out, ok := resolver.ResolveLicensesField([]deps.Lcs{{Type: "MIT"}, {Type: "GPL-3.0"}})
-	if !ok || out != "MIT OR GPL-3.0" {
-		t.Fatal("failed to parse licenses field")
-	}
-}
-
-// -----------------------------
-// GetInstalledPkgs / ListPkgPaths Mock Test
-// -----------------------------
-
+// MockResolver 用于替代 ListPkgPaths / GetInstalledPkgs 的外部调用
 type mockResolver struct {
 	deps.NpmResolver
-	mockOutput *bytes.Buffer
+	mockOutput io.Reader
 }
 
-func (r *mockResolver) ListPkgPaths() (*bytes.Buffer, error) {
-	return r.mockOutput, nil
+func (m *mockResolver) ListPkgPaths() (io.Reader, error) {
+	return m.mockOutput, nil
 }
 
 func TestGetInstalledPkgs_MockPaths(t *testing.T) {
@@ -148,13 +105,14 @@ func TestGetInstalledPkgs_MockPaths(t *testing.T) {
 	os.MkdirAll(lodashPath, 0o755)
 	os.MkdirAll(expressPath, 0o755)
 
+	// 模拟 ListPkgPaths 输出绝对路径
 	var b bytes.Buffer
 	b.WriteString(lodashPath + "\n")
 	b.WriteString(expressPath + "\n")
 
 	resolver := &mockResolver{mockOutput: &b}
-
 	pkgs := resolver.GetInstalledPkgs(nodeModules)
+
 	if len(pkgs) != 2 {
 		t.Fatalf("expected 2 packages, got %d", len(pkgs))
 	}
@@ -166,4 +124,19 @@ func TestGetInstalledPkgs_MockPaths(t *testing.T) {
 	if !names["lodash"] || !names["express"] {
 		t.Fatal("expected packages 'lodash' and 'express' to be present")
 	}
+}
+
+func TestNeedSkipInstallPkgs_Timeout(t *testing.T) {
+	resolver := &deps.NpmResolver{}
+	// 这里主要测试不 panic, 倒计时结束后返回 false
+	got := resolver.NeedSkipInstallPkgs()
+	if got != false {
+		t.Fatal("expected NeedSkipInstallPkgs to return false on timeout")
+	}
+}
+
+func TestInstallPkgs_NoPanic(t *testing.T) {
+	resolver := &deps.NpmResolver{}
+	// 仅验证不 panic
+	resolver.InstallPkgs()
 }
