@@ -37,7 +37,7 @@ func (r *testResolver) InstallPkgs() {
 	// do nothing
 }
 
-func (r *testResolver) ListPkgPaths() (deps.Reader, error) {
+func (r *testResolver) ListPkgPaths() (io.Reader, error) {
 	var b bytes.Buffer
 	for _, path := range r.listOutput {
 		b.WriteString(path + "\n")
