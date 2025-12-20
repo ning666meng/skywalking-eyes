@@ -18,7 +18,7 @@ name: Go
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "skipping-cross-platform-packages " ]
   pull_request:
     branches: [ "main" ]
 
@@ -39,5 +39,9 @@ jobs:
 
     - name: Test with coverage (pkg/deps)
       run: |
-        go test ./pkg/deps -coverprofile=coverage.out  
-        go tool cover -func=coverage.out  
+        go test ./pkg/deps \
+          -covermode=atomic \
+          -coverpkg=./pkg/deps \
+          -coverprofile=coverage.out
+        go tool cover -func=coverage.out
+ 
