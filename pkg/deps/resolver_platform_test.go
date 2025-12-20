@@ -21,7 +21,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
+
 	"testing"
 
 	"github.com/apache/skywalking-eyes/pkg/deps"
