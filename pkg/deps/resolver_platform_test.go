@@ -1,6 +1,6 @@
 // Licensed to the Apache Software Foundation (ASF) under one
 // or more contributor license agreements.  See the NOTICE file
-// for additional information regarding copyright ownership.
+// distributed with this work for additional information regarding copyright ownership.
 // The ASF licenses this file under the Apache License, Version 2.0 (the
 // "License"); you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -10,8 +10,7 @@
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and limitations
-// under the License.
+// See the License for the specific language governing permissions and limitations under the License.
 
 package deps_test
 
@@ -27,28 +26,9 @@ import (
 )
 
 // -----------------------------
-// Mock resolver to avoid real npm commands
+// ResolvePackageLicense 测试
 // -----------------------------
-type testResolver struct {
-	deps.NpmResolver
-	listOutput []string // mock paths returned by ListPkgPaths
-}
 
-func (r *testResolver) InstallPkgs() {
-	// do nothing
-}
-
-func (r *testResolver) ListPkgPaths() (io.Reader, error) {
-	var b bytes.Buffer
-	for _, path := range r.listOutput {
-		b.WriteString(path + "\n")
-	}
-	return &b, nil
-}
-
-// -----------------------------
-// Test: Skip cross-platform packages
-// -----------------------------
 func TestResolvePackageLicense_SkipCrossPlatform(t *testing.T) {
 	resolver := &deps.NpmResolver{}
 	cfg := &deps.ConfigDeps{}
@@ -63,19 +43,27 @@ func TestResolvePackageLicense_SkipCrossPlatform(t *testing.T) {
 		pkg = "@parcel/watcher-linux-x64"
 	}
 
-	result := resolver.ResolvePackageLicense(pkg, "/non/existent/path", cfg)
+	result := resolver.ResolvePackageLicense(
+		pkg,
+		"/non/existent/path",
+		cfg,
+	)
 
 	if result.LicenseSpdxID != "" {
-		t.Fatalf("expected empty license for cross-platform package %q, got %q", pkg, result.LicenseSpdxID)
+		t.Fatalf(
+			"expected empty license for cross-platform package %q, got %q",
+			pkg, result.LicenseSpdxID,
+		)
 	}
 }
 
-// -----------------------------
-// Test: Current platform package resolves normally
-// -----------------------------
 func TestResolvePackageLicense_CurrentPlatform(t *testing.T) {
+	resolver := &deps.NpmResolver{}
+	cfg := &deps.ConfigDeps{}
+
 	tmp := t.TempDir()
 	pkgFile := filepath.Join(tmp, deps.PkgFileName)
+
 	err := os.WriteFile(pkgFile, []byte(`{
 		"name": "normal-pkg",
 		"license": "Apache-2.0"
@@ -84,54 +72,95 @@ func TestResolvePackageLicense_CurrentPlatform(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resolver := &deps.NpmResolver{}
-	cfg := &deps.ConfigDeps{}
-
-	result := resolver.ResolvePackageLicense("normal-pkg", tmp, cfg)
+	result := resolver.ResolvePackageLicense(
+		"normal-pkg",
+		tmp,
+		cfg,
+	)
 
 	if result.LicenseSpdxID != "Apache-2.0" {
-		t.Fatalf("expected license Apache-2.0, got %q", result.LicenseSpdxID)
+		t.Fatalf(
+			"expected license Apache-2.0, got %q",
+			result.LicenseSpdxID,
+		)
 	}
 }
 
-// -----------------------------
-// Test: Invalid path does not crash
-// -----------------------------
 func TestResolvePackageLicense_InvalidPath(t *testing.T) {
 	resolver := &deps.NpmResolver{}
 	cfg := &deps.ConfigDeps{}
 
-	_ = resolver.ResolvePackageLicense("random-package", "/definitely/not/exist", cfg)
+	_ = resolver.ResolvePackageLicense(
+		"some-random-package",
+		"/definitely/not/exist",
+		cfg,
+	)
 }
 
 // -----------------------------
-// Test: GetInstalledPkgs using mock ListPkgPaths
+// CanResolve 测试
 // -----------------------------
+
+func TestCanResolve(t *testing.T) {
+	resolver := &deps.NpmResolver{}
+
+	if !resolver.CanResolve("package.json") {
+		t.Fatal("expected CanResolve to return true for package.json")
+	}
+	if resolver.CanResolve("otherfile.txt") {
+		t.Fatal("expected CanResolve to return false for non-package.json")
+	}
+}
+
+// -----------------------------
+// ListPkgPaths & GetInstalledPkgs 测试（模拟 npm 输出）
+// -----------------------------
+
+type mockResolver struct {
+	deps.NpmResolver
+	mockOutput io.Reader
+}
+
+func (r *mockResolver) ListPkgPaths() (io.Reader, error) {
+	return r.mockOutput, nil
+}
+
 func TestGetInstalledPkgs_MockPaths(t *testing.T) {
 	tmp := t.TempDir()
 	nodeModules := filepath.Join(tmp, "node_modules")
-	_ = os.MkdirAll(nodeModules, 0o755)
+	os.MkdirAll(filepath.Join(nodeModules, "lodash"), 0o755)
+	os.MkdirAll(filepath.Join(nodeModules, "express"), 0o755)
 
-	mockPaths := []string{
-		filepath.Join(nodeModules, "pkg1"),
-		filepath.Join(nodeModules, "pkg2"),
+	var b bytes.Buffer
+	b.WriteString(filepath.Join(nodeModules, "lodash") + "\n")
+	b.WriteString(filepath.Join(nodeModules, "express") + "\n")
+
+	resolver := &mockResolver{
+		mockOutput: &b,
 	}
 
-	tr := &testResolver{listOutput: mockPaths}
-	pkgs := tr.GetInstalledPkgs(nodeModules)
-
+	pkgs := resolver.GetInstalledPkgs(nodeModules)
 	if len(pkgs) != 2 {
 		t.Fatalf("expected 2 packages, got %d", len(pkgs))
 	}
-	if pkgs[0].Name != "pkg1" || pkgs[1].Name != "pkg2" {
-		t.Fatalf("unexpected package names: %v, %v", pkgs[0].Name, pkgs[1].Name)
+
+	names := map[string]bool{}
+	for _, p := range pkgs {
+		names[p.Name] = true
+	}
+	if !names["lodash"] || !names["express"] {
+		t.Fatal("expected packages 'lodash' and 'express' to be present")
 	}
 }
 
 // -----------------------------
-// Test: InstallPkgs does not execute npm
+// 安全性测试（异常路径、防御分支）
 // -----------------------------
-func TestInstallPkgs_NoCrash(t *testing.T) {
-	tr := &testResolver{}
-	tr.InstallPkgs() // should not panic or run npm
+
+func TestResolvePkgFile_NonExistent(t *testing.T) {
+	resolver := &deps.NpmResolver{}
+	_, err := resolver.ParsePkgFile("/definitely/not/exist/package.json")
+	if err == nil {
+		t.Fatal("expected error for non-existent package.json")
+	}
 }
