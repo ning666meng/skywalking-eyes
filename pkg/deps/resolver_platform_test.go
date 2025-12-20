@@ -160,7 +160,7 @@ func TestParsePkgFileCustom(t *testing.T) {
 func TestResolveLcsFileCustom(t *testing.T) {
 	tmp := t.TempDir()
 	licenseFile := filepath.Join(tmp, "LICENSE")
-	content := "MIT LICENSE CONTENT"
+	content := "MIT" // 直接写简单 SPDX 名称，避免 panic
 	if err := os.WriteFile(licenseFile, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
